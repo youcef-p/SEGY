@@ -1,0 +1,5 @@
+numpy
+sphinx
+sphinx-gallery
+matplotlib
+sphinx-rtd-theme

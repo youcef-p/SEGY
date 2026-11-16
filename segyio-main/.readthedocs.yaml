@@ -1,0 +1,23 @@
+# Read the Docs configuration file for Sphinx projects
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+version: 2
+
+build:
+  os: ubuntu-lts-latest
+  tools:
+    python: "3"
+  apt_packages:
+    - build-essential
+    - cmake
+  jobs:
+    post_install:
+      - cmake -S . -B build -DBUILD_PYTHON=ON -DBUILD_BIN=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$READTHEDOCS_VIRTUALENV_PATH"
+      - cmake --build build
+      - cmake --install build
+
+sphinx:
+  configuration: python/docs/conf.py
+
+python:
+  install:
+    - requirements: requirements-readthedocs.txt
