@@ -1,0 +1,192 @@
+name: Build and Test
+permissions: {}
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    name: Build and test ${{ matrix.build_type }} on ${{ matrix.os }} ${{ matrix.compiler }} ${{ matrix.cmake_generator }} BUILD_PYTHON=${{ matrix.build_python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            cmake_generator: "-G \"Visual Studio 17 2022\" -A x64"
+            build_type: "Release"
+            compiler_flags: "-D_CRT_SECURE_NO_WARNINGS /EHsc"
+            build_python: "OFF"
+          - os: windows-2022
+            cmake_generator: "-G \"Visual Studio 17 2022\" -A x64"
+            build_type: "Debug"
+            compiler_flags: "-D_CRT_SECURE_NO_WARNINGS /EHsc"
+            build_python: "OFF"
+          - os: windows-2022
+            cmake_generator: "-G \"Visual Studio 17 2022\" -A Win32"
+            build_type: "Release"
+            compiler_flags: "-D_CRT_SECURE_NO_WARNINGS /EHsc"
+            build_python: "OFF"
+          - os: ubuntu-latest
+            privledges: "sudo"
+            build_type: "Release"
+            build_python: "OFF"
+          - os: ubuntu-latest
+            privledges: "sudo"
+            build_type: "Debug"
+            compiler_flags: "-Wextra -Wall -pedantic"
+            build_python: "OFF"
+          - os: ubuntu-latest
+            privledges: "sudo"
+            build_type: "Debug"
+            compiler_flags: "-Wextra -Wall -pedantic"
+            build_python: "ON"
+          - os: ubuntu-latest
+            privledges: "sudo"
+            compiler: "clang"
+            mkdoc: "-DBUILD_DOC=ON -DSPHINX_ARGS=-WT"
+            build_type: "Release"
+            build_python: "OFF"
+          - os: ubuntu-latest
+            privledges: "sudo"
+            compiler: "clang"
+            build_type: "Debug"
+            compiler_flags: "-Wextra -Wall -pedantic"
+            build_python: "OFF"
+          - os: macos-latest
+            privledges: "sudo"
+            build_type: "Release"
+            build_python: "OFF"
+          - os: macos-latest
+            privledges: "sudo"
+            build_type: "Debug"
+            compiler_flags: "-Wextra -Wall -pedantic"
+            build_python: "ON"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install clang toolchain
+        if: ${{ matrix.compiler == 'clang' }}
+        run: |
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get -y install clang clang-tools
+            echo "CC=/usr/bin/clang"    >> $GITHUB_ENV
+            echo "CXX=/usr/bin/clang++" >> $GITHUB_ENV
+
+      # Required to be able to install Python packages on MacOS
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: ${{ matrix.build_python == 'ON' }}
+        with:
+          python-version: '3.13'
+
+      - name: Install build/test for Python dependencies
+        working-directory: python
+        if: ${{ matrix.build_python == 'ON' }}
+        run: |
+          python3 -m pip install -r requirements-dev.txt
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_PYTHON=${{ matrix.build_python }} \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
+            -DCMAKE_INSTALL_NAME_DIR=/usr/local/lib \
+            -DCMAKE_C_FLAGS="${{ matrix.compiler_flags }}" \
+            -DCMAKE_CXX_FLAGS="${{ matrix.compiler_flags }}" \
+            ${{ matrix.mkdoc }} \
+            ${{ matrix.cmake_generator }} \
+
+      - name: Build and Install
+        shell: bash
+        run: |
+            ${{ matrix.privledges }} cmake \
+              --build build \
+              --config ${{ matrix.build_type }} \
+              --target install \
+
+      - name: Test
+        shell: bash
+        run: |
+            cd build
+            ctest -C ${{ matrix.build_type }} --output-on-failure -V
+
+
+  matlab:
+    runs-on: ubuntu-latest
+    name: Build and test matlab code
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up MATLAB
+        uses: matlab-actions/setup-matlab@f9e43010f1ae678f7cfa0542fe2a4f60f7d1ad8d # v3.1.0
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_PYTHON=OFF \
+            -DBUILD_MEX=ON \
+            -DBUILD_BIN=OFF \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_NAME_DIR=/usr/local/lib \
+
+      - name: Build and Install
+        shell: bash
+        run: |
+            sudo cmake \
+              --build build \
+              --config Release \
+              --target install \
+
+      - name: Set LD_LIBRARY_PATH
+        run: echo "LD_LIBRARY_PATH=/usr/local/lib" >> $GITHUB_ENV
+
+      - name: Run 'segy.m' test script
+        uses: matlab-actions/run-command@bfa857648f4895aa98a446fe41c85e0788421ed5 # v3.3.0
+        with:
+          command: addpath('build/mex'), try, run('build/mex/test/segy.m'), exit(0), catch ME, disp(getReport(ME, 'extended')), exit(-1), end;
+
+      - name: Run 'segyspec.m' test script
+        uses: matlab-actions/run-command@bfa857648f4895aa98a446fe41c85e0788421ed5 # v3.3.0
+        with:
+          command: addpath('build/mex'), try, run('build/mex/test/segyspec.m'), exit(0), catch ME, disp(getReport(ME, 'extended')), exit(-1), end;
+
+  python:
+    runs-on: ubuntu-latest
+    name: Build and test python on example stream
+    strategy:
+      fail-fast: false
+      matrix:
+        stream: [pyfile, pymemory]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build/test dependencies
+        working-directory: python
+        run: |
+          python3 -m pip install -r requirements-dev.txt
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          cmake -S . -B build -DBUILD_PYTHON=ON -DBUILD_BIN=OFF
+          cmake --build build
+
+      - name: Test
+        shell: bash
+        run: |
+          cd python
+          pytest -rP --datasource ${{ matrix.stream }} test/stream.py
